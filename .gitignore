@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+temp_data/
+.env
+.idea/
+.DS_Store
+*.log

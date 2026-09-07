@@ -1,0 +1,35 @@
+# ====================
+# 核心
+# ====================
+langgraph
+langchain-openai
+openai
+python-dotenv
+
+# ====================
+# 向量与模型
+# ====================
+# 注意：torch 安装 CPU 版，命令见下
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+pymilvus[model]
+sentence-transformers
+FlagEmbedding
+
+# ====================
+# 存储
+# ====================
+pymongo
+minio
+
+# ====================
+# Web 服务
+# ====================
+fastapi
+uvicorn[standard]
+pydantic
+
+# ====================
+# 可选
+# ====================
+mcp>=1.19.0,<2
+grandalf

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>旅游知识库 - 文档导入</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #333; }
+  h1 { font-size: 22px; }
+  .box { border: 1px dashed #ccc; padding: 20px; border-radius: 8px; text-align: center; }
+  #file { display: none; }
+  label.btn, button { display: inline-block; padding: 10px 18px; background: #ff7a45; color: #fff;
+    border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  button:disabled { background: #ccc; cursor: not-allowed; }
+  #fileName { margin: 10px 0; color: #666; }
+  #progress { margin-top: 20px; }
+  .node { margin: 4px 0; }
+  .node.done { color: #52c41a; }
+  .node.run { color: #ff7a45; font-weight: bold; }
+  #statusText { margin-top: 12px; color: #555; }
+</style>
+</head>
+<body>
+  <h1>📄 旅游知识库 · 文档导入</h1>
+  <div class="box">
+    <label class="btn" for="file">选择 Markdown 文件</label>
+    <input type="file" id="file" accept=".md,.markdown,.txt">
+    <div id="fileName">（支持 .md 纯文本文件）</div>
+    <button id="uploadBtn" onclick="upload()" disabled>开始导入</button>
+  </div>
+  <div id="progress"></div>
+  <div id="statusText"></div>
+
+<script>
+let selectedFile = null;
+document.getElementById('file').addEventListener('change', e => {
+  selectedFile = e.target.files[0] || null;
+  document.getElementById('fileName').textContent = selectedFile ? `已选择：${selectedFile.name}` : '';
+  document.getElementById('uploadBtn').disabled = !selectedFile;
+});
+
+// 上传后轮询 /status/{task_id} 展示各节点进度
+async function upload() {
+  if (!selectedFile) return;
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  document.getElementById('progress').innerHTML = '';
+  const fd = new FormData();
+  fd.append('file', selectedFile);
+
+  let taskId;
+  try {
+    const resp = await fetch('/upload', { method: 'POST', body: fd });
+    const data = await resp.json();
+    taskId = data.task_id;
+    document.getElementById('statusText').textContent = `任务已启动：${taskId}`;
+  } catch (err) {
+    document.getElementById('statusText').textContent = '上传失败：' + err;
+    btn.disabled = false;
+    return;
+  }
+
+  // 轮询任务状态
+  const box = document.getElementById('progress');
+  const timer = setInterval(async () => {
+    const r = await fetch(`/status/${taskId}`);
+    const st = await r.json();
+    renderNodes(st);
+    if (st.status === 'completed') { clearInterval(timer); box.innerHTML += '<div style="color:#52c41a;margin-top:10px">✔ 导入完成</div>'; btn.disabled = false; }
+    else if (st.status === 'failed') { clearInterval(timer); box.innerHTML += '<div style="color:#f5222d;margin-top:10px">✘ 导入失败</div>'; btn.disabled = false; }
+  }, 1000);
+}
+
+function renderNodes(st) {
+  const box = document.getElementById('progress');
+  const all = [...(st.done_list||[]), ...(st.running_list||[])];
+  box.innerHTML = all.map(n =>
+    `<div class="node ${(st.running_list||[]).includes(n) ? 'run' : 'done'}">${n}</div>`).join('')
+    + (st.durations && Object.keys(st.durations).length
+        ? '<div style="color:#888;font-size:12px;margin-top:6px">耗时：'
+          + Object.entries(st.durations).map(([k,v])=>`${k} ${v}s`).join('、') + '</div>' : '');
+}
+</script>
+</body>
+</html>

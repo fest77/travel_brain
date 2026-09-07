@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>旅游知识库 - AI 问答</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; margin: 0; background: #f6f6f6;
+         padding-bottom: 96px; /* 给底部固定输入栏让出空间，避免遮挡最后几行消息 */ }
+  header { background: #ff7a45; color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 18px; }
+  #clearBtn { background: rgba(255,255,255,.2); border: none; color: #fff; padding: 5px 12px; border-radius: 4px; cursor: pointer; }
+  #chat { max-width: 760px; margin: 0 auto; padding: 16px; min-height: calc(100vh - 150px); }
+  .msg { display: flex; margin: 12px 0; }
+  .msg.user { justify-content: flex-end; }
+  .bubble { max-width: 76%; padding: 10px 14px; border-radius: 10px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+  .msg.user .bubble { background: #ff7a45; color: #fff; }
+  .msg.assistant .bubble { background: #fff; border: 1px solid #eee; }
+  #inputBar { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #ddd; padding: 10px 20px; display: flex; gap: 10px; }
+  #inputBar input { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 6px; }
+  #sendBtn { background: #ff7a45; border: none; color: #fff; border-radius: 6px; padding: 0 22px; cursor: pointer; }
+  #sendBtn:disabled { background: #ccc; }
+  .tip { color: #aaa; text-align:center; margin: 30px 0; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏖 旅游知识库 · AI 问答</h1>
+  <button id="clearBtn" onclick="clearHistory()">清空历史</button>
+</header>
+<div id="chat">
+  <div class="tip">你可以问：三亚有哪些必去景点？三亚5日游怎么安排？三亚有什么美食？带老人孩子适合住哪个湾区？……</div>
+</div>
+<div id="inputBar">
+  <input id="input" placeholder="请输入你的旅游问题…" onkeydown="if(event.key==='Enter')send()">
+  <button id="sendBtn" onclick="send()">发送</button>
+</div>
+
+<script>
+// 会话 ID 存 localStorage，保持多轮上下文
+let sessionId = localStorage.getItem('travel_session') || crypto.randomUUID();
+localStorage.setItem('travel_session', sessionId);
+
+const chatBox = document.getElementById('chat');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('sendBtn');
+
+// 把 Markdown 语法剥掉，仅保留可读的纯文本（去标题#/加粗/斜杠/代码/列表符号/引用>）
+function toPlainText(s) {
+  if (!s) return '';
+  // 1) 去掉代码围栏整段
+  s = s.replace(/```[\s\S]*?```/g, ' ');
+  const lines = s.split('\n').map(line => {
+    let t = line.replace(/^\s*#{1,6}\s+/, '');   // 行首标题 ### → 去符号
+    t = t.replace(/^>\s?/, '');                   // 引用 >
+    t = t.replace(/^(\s*)[-*+]\s+/, '$1');        // 无序列表 - * + → 只留缩进
+    return t;
+  });
+  s = lines.join('\n');
+  s = s.replace(/\*\*(.+?)\*\*/g, '$1');          // **加粗**
+  s = s.replace(/__(.+?)__/g, '$1');              // __下划线__
+  s = s.replace(/`([^`]+)`/g, '$1');              // `行内代码`
+  return s;
+}
+
+function addMsg(role, text, streaming) {
+  const box = document.createElement('div');
+  box.className = 'msg ' + role;
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  b.textContent = text;
+  box.appendChild(b);
+  chatBox.appendChild(box);
+  chatBox.scrollTop = chatBox.scrollHeight;
+  if (streaming) return b;          // 返回元素便于后续追加增量
+  return null;
+}
+
+async function send() {
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  addMsg('user', q);
+  const bubble = addMsg('assistant', '思考中…', true);
+  sendBtn.disabled = true;
+
+  try {
+    // 1) 提交流式请求，拿到 task_id
+    const resp = await fetch('/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, session_id: sessionId, is_stream: true }),
+    });
+    const data = await resp.json();
+    const taskId = data.task_id;
+
+    // 2) 建立 SSE 连接，实时接收增量
+    const es = new EventSource(`/stream/${taskId}`);
+    let final = false;
+    let raw = '';
+    es.addEventListener('delta', e => {
+      const d = JSON.parse(e.data);
+      raw += d.delta;
+      // 累积原文并整体转纯文本显示（保证流式结束后无任何 markdown 残留）
+      if (raw) bubble.textContent = toPlainText(raw);
+    });
+    es.addEventListener('final', e => { final = true; es.close(); sendBtn.disabled = false; });
+    // 检索/精排阶段(尚未有增量)显示节点进度，避免"卡住"错觉
+    es.addEventListener('progress', e => {
+      if (raw) return;                       // 已有答案增量就不再覆盖
+      const d = JSON.parse(e.data);
+      const running = (d.running_list || []).join('、');
+      bubble.textContent = running ? '正在' + running + '…' : '思考中…';
+    });
+    es.onerror = () => { es.close(); sendBtn.disabled = false; };
+  } catch (err) {
+    bubble.textContent = '请求出错：' + err;
+    sendBtn.disabled = false;
+  }
+}
+
+async function clearHistory() {
+  if (!confirm('确认清空当前会话历史？')) return;
+  await fetch(`/history/${sessionId}`, { method: 'DELETE' });
+  location.reload();
+}
+</script>
+</body>
+</html>
